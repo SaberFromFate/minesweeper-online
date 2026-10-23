@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.spec
+.venv/
+venv/
+.idea/
+.vscode/
+
+# локальные сохранения и логи (если играли прямо из папки проекта)
+*.saper
+*.log
