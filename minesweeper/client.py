@@ -26,7 +26,15 @@ from pathlib import Path
 from tkinter import messagebox, simpledialog, ttk
 
 from . import saves
-from .protocol import DEFAULT_PORT, FIELD_SIZE, discover, lan_ip
+from .protocol import (
+    DEFAULT_PORT,
+    FIELD_MAX,
+    FIELD_MIN,
+    FIELD_PRESETS,
+    FIELD_SIZE,
+    discover,
+    lan_ip,
+)
 from .sounds import SoundPlayer
 
 CELL_MIN = 10
@@ -195,7 +203,8 @@ class NetClient(threading.Thread):
 # ----------------------------------------------------------------------
 # мелкие конструкторы виджетов
 # ----------------------------------------------------------------------
-def _button(parent, text, command, primary=False, width=24) -> tk.Button:
+def _button(parent, text, command, primary=False, width=24,
+            compact=False) -> tk.Button:
     return tk.Button(
         parent,
         text=text,
@@ -208,8 +217,8 @@ def _button(parent, text, command, primary=False, width=24) -> tk.Button:
         bd=0,
         relief="flat",
         highlightthickness=0,
-        padx=14,
-        pady=10,
+        padx=14 if not compact else 6,
+        pady=10 if not compact else 5,
         cursor="hand2",
         font=("Segoe UI", 11, "bold" if primary else "normal"),
     )
@@ -251,6 +260,70 @@ def _check(parent, text, variable, command) -> tk.Checkbutton:
 
 
 # ----------------------------------------------------------------------
+# размер поля: пресеты и произвольное «ширина × высота»
+# ----------------------------------------------------------------------
+class FieldSizeSelector(tk.Frame):
+    """Быстрые кнопки и два поля ввода «ширина × высота».
+
+    ``get()`` возвращает ``(w, h)`` или ``None``, если введены не числа
+    вне границ ``FIELD_MIN … FIELD_MAX``.
+    """
+
+    def __init__(self, master, value: tuple[int, int] | None = None,
+                 bg: str = BG) -> None:
+        super().__init__(master, bg=bg)
+        self.w_var = tk.StringVar(value=str(value[0] if value else FIELD_SIZE))
+        self.h_var = tk.StringVar(value=str(value[1] if value else FIELD_SIZE))
+
+        _label(self, "Размер поля", 10, fg=MUTED, bg=bg).pack(anchor="w")
+        presets = tk.Frame(self, bg=bg)
+        presets.pack(fill="x", pady=(4, 2))
+        for side in FIELD_PRESETS:
+            btn = _button(presets, f"{side}", lambda s=side: self._preset(s),
+                          width=7, compact=True)
+            btn.pack(side="left", fill="x", expand=True, padx=(0, 5))
+
+        row = tk.Frame(self, bg=bg)
+        row.pack(fill="x", pady=(6, 0))
+        entry_w = _entry(row, self.w_var, width=9)
+        entry_w.pack(side="left", ipady=4)
+        _label(row, "×", 11, fg=MUTED, bg=bg).pack(side="left", padx=6)
+        entry_h = _entry(row, self.h_var, width=9)
+        entry_h.pack(side="left", ipady=4)
+        for entry in (entry_w, entry_h):
+            entry.bind("<Return>", lambda event: self._accept())
+            entry.bind("<FocusOut>", lambda event: self._normalize())
+        _label(row, "клеток · 8 … 4000", 9, fg="#5c6a78", bg=bg).pack(
+            side="left", padx=(8, 0))
+
+    def _preset(self, side: int) -> None:
+        self.w_var.set(str(side))
+        self.h_var.set(str(side))
+
+    def _normalize(self) -> None:
+        size = self.get()
+        if size is not None:
+            self.w_var.set(str(size[0]))
+            self.h_var.set(str(size[1]))
+
+    def _accept(self) -> None:
+        size = self.get()
+        if size is not None:
+            self.w_var.set(str(size[0]))
+            self.h_var.set(str(size[1]))
+
+    def get(self) -> tuple[int, int] | None:
+        try:
+            w = int(self.w_var.get().strip())
+            h = int(self.h_var.get().strip())
+        except ValueError:
+            return None
+        if not (FIELD_MIN <= w <= FIELD_MAX and FIELD_MIN <= h <= FIELD_MAX):
+            return None
+        return w, h
+
+
+# ----------------------------------------------------------------------
 # экран: главное меню
 # ----------------------------------------------------------------------
 class MenuScreen(tk.Frame):
@@ -261,7 +334,8 @@ class MenuScreen(tk.Frame):
         box.place(relx=0.5, rely=0.5, anchor="center")
 
         _label(box, "САПЁР", 44, True).pack()
-        _label(box, "500 × 500 — 250 тысяч клеток", 12, fg=MUTED).pack(pady=(0, 26))
+        _label(box, "сеть до 32 игроков · поле от 50×50 до 1500×1500",
+               12, fg=MUTED).pack(pady=(0, 26))
 
         _button(box, "Играть соло", self._solo, primary=True).pack(fill="x", pady=5)
         _button(box, "Играть по сети", app.show_servers).pack(fill="x", pady=5)
@@ -284,7 +358,7 @@ class MenuScreen(tk.Frame):
 
     def _solo(self) -> None:
         self._nick_save()
-        self.app.start_solo()
+        self.app.show_solo_setup()
 
     def _nick_changed(self, event=None) -> None:
         value = self.name_var.get()
@@ -296,6 +370,48 @@ class MenuScreen(tk.Frame):
     def _nick_save(self) -> None:
         self._nick_changed()
         self.app.save_name()
+
+
+# ----------------------------------------------------------------------
+# экран: настройки соло-партии (выбор размера поля)
+# ----------------------------------------------------------------------
+class SoloSetupScreen(tk.Frame):
+    def __init__(self, master, app: "App") -> None:
+        super().__init__(master, bg=BG)
+        self.app = app
+
+        card = tk.Frame(self, bg=CARD, padx=34, pady=28,
+                        highlightthickness=1, highlightbackground="#243040")
+        card.place(relx=0.5, rely=0.5, anchor="center")
+
+        _label(card, "Играть соло", 22, True, bg=CARD).pack(anchor="w")
+        _label(card, "Поле создаётся на вашем компьютере — без сети", 10,
+               fg=MUTED, bg=CARD).pack(anchor="w", pady=(2, 18))
+
+        self.size = FieldSizeSelector(card, value=(app.field_w, app.field_h),
+                                      bg=CARD)
+        self.size.pack(fill="x")
+
+        self.error = _label(card, "", 10, fg=DANGER, bg=CARD)
+        self.error.pack(anchor="w", pady=(14, 0))
+
+        buttons = tk.Frame(card, bg=CARD)
+        buttons.pack(fill="x", pady=(20, 0))
+        _button(buttons, "Назад", app.show_menu, width=12).pack(side="left")
+        _button(buttons, "Играть", self._start, primary=True, width=14).pack(
+            side="right", padx=(10, 0)
+        )
+
+    def _start(self) -> None:
+        size = self.size.get()
+        if size is None:
+            self.error.configure(
+                text=f"Размер поля — целые числа от {FIELD_MIN} до {FIELD_MAX}"
+            )
+            return
+        self.error.configure(text="Создаю поле…")
+        self.update_idletasks()
+        self.app.start_solo(field_w=size[0], field_h=size[1])
 
 
 # ----------------------------------------------------------------------
@@ -706,21 +822,29 @@ class CreateScreen(tk.Frame):
             ("Макс. игроков", _entry(card, self.max_var, width=8)),
             ("Пароль (необязательно)", _entry(card, self.pass_var, show="•")),
         )
-        for offset, (title, widget) in enumerate(rows):
-            row = 2 + offset * 2
+        row = 2
+        for title, widget in rows:
             _label(card, title, 10, fg=MUTED, bg=CARD).grid(
                 row=row, column=0, columnspan=2, sticky="w", pady=(0, 4)
             )
             widget.grid(row=row + 1, column=0, columnspan=2, sticky="we",
                         ipady=5, pady=(0, 14))
             widget.bind("<Return>", lambda event: self._create())
+            row += 2
         first_entry = rows[0][1]
 
+        self.size = FieldSizeSelector(card, value=(app.field_w, app.field_h),
+                                      bg=CARD)
+        self.size.grid(row=row, column=0, columnspan=2, sticky="we",
+                       pady=(2, 6))
+        row += 2
+
         self.error = _label(card, "", 10, fg=DANGER, bg=CARD)
-        self.error.grid(row=8, column=0, columnspan=2, sticky="w")
+        self.error.grid(row=row, column=0, columnspan=2, sticky="w")
+        row += 1
 
         buttons = tk.Frame(card, bg=CARD)
-        buttons.grid(row=9, column=0, columnspan=2, sticky="we", pady=(18, 0))
+        buttons.grid(row=row, column=0, columnspan=2, sticky="we", pady=(18, 0))
         _button(buttons, "Назад", app.show_servers, width=12).pack(side="left")
         _button(buttons, "Создать", self._create, primary=True, width=14).pack(side="right")
 
@@ -728,6 +852,7 @@ class CreateScreen(tk.Frame):
 
     def _create(self) -> None:
         name = self.name_var.get().strip() or f"Игра {self.app.name}"
+        size = self.size.get()
         try:
             max_players = int(self.max_var.get().strip())
         except ValueError:
@@ -736,9 +861,16 @@ class CreateScreen(tk.Frame):
         if not 1 <= max_players <= 32:
             self.error.configure(text="Максимум игроков — от 1 до 32")
             return
+        if size is None:
+            self.error.configure(
+                text=f"Размер поля — целые числа от {FIELD_MIN} до {FIELD_MAX}"
+            )
+            return
         self.error.configure(text="Создаю поле…")
         self.update_idletasks()
-        error = self.app.host_game(name, max_players, self.pass_var.get().strip())
+        error = self.app.host_game(name, max_players,
+                                   self.pass_var.get().strip(),
+                                   field_w=size[0], field_h=size[1])
         if error:
             self.error.configure(text=error)
 
@@ -1000,6 +1132,8 @@ class GameScreen(tk.Frame):
         self.cam_y = self.board_h // 2
         self.cols = 38
         self.rows = 22
+        self.gcols = 40
+        self.grows = 24
         self.built_key: tuple | None = None
         self.slots: list[list[tuple[int, int] | None]] = []
         self.shown: list[list[str]] = []
@@ -1014,8 +1148,11 @@ class GameScreen(tk.Frame):
         self._dirty = False
 
         self._last_view_sent = 0.0
+        self._last_view_key = None
         self._last_cursor = 0.0
         self.hover = (0, 0)
+        #: субклеточный сдвиг поля в пикселях (плавная панорама мышью)
+        self._pan_px = (0, 0)
         self._drag: tuple[int, int, int, int] | None = None
         self._edge = (0, 0)
         self._edge_speed = 1
@@ -1292,21 +1429,34 @@ class GameScreen(tk.Frame):
     def _request_view(self, force: bool = False) -> None:
         if not self.running or not self.ready:
             return
-        now = time.time()
-        if not force and now - self._last_view_sent < 0.03:
-            return
-        self._last_view_sent = now
         width = self.canvas.winfo_width()
         height = self.canvas.winfo_height()
         if width <= 1:
             width, height = 1000, 600
-        self.cols = max(4, width // self.cs)
-        self.rows = max(4, height // self.cs)
-        self.cam_x = max(0, min(self.board_w - self.cols, self.cam_x))
-        self.cam_y = max(0, min(self.board_h - self.rows, self.cam_y))
+        cols = max(4, width // self.cs)
+        rows = max(4, height // self.cs)
+        cam_x = max(0, min(self.board_w - cols, self.cam_x))
+        cam_y = max(0, min(self.board_h - rows, self.cam_y))
+        # буферная кайма: просим у сервера на клетку больше во все стороны,
+        # чтобы при плавной панораме краевые колонки уже были в кэше
+        x = max(0, cam_x - 1)
+        y = max(0, cam_y - 1)
+        w = cols + 2
+        h = rows + 2
+        key = (x, y, w, h)
+        if key == self._last_view_key:
+            return
+        now = time.time()
+        # и принудительные запросы не чаще раза за кадр: при быстрых движениях
+        # камеры слать каждое событие мыши бессмысленно
+        if now - self._last_view_sent < 0.016:
+            return
+        self._last_view_sent = now
+        self._last_view_key = key
+        self.cols, self.rows = cols, rows
+        self.cam_x, self.cam_y = cam_x, cam_y
         self._ensure_grid()
-        self.net.send({"t": "view", "x": self.cam_x, "y": self.cam_y,
-                       "w": self.cols, "h": self.rows})
+        self.net.send({"t": "view", "x": x, "y": y, "w": w, "h": h})
 
     def _ensure_grid(self) -> None:
         key = (self.cols, self.rows, self.cs)
@@ -1316,16 +1466,22 @@ class GameScreen(tk.Frame):
         self.canvas.delete("all")
         self.cursor_items.clear()
         self.overlay.clear()
+        self._pan_px = (0, 0)
         self._font = ("Consolas", max(7, int(self.cs * 0.60)), "bold")
-        self.slots = [[None] * self.cols for _ in range(self.rows)]
-        self.shown = [[""] * self.cols for _ in range(self.rows)]
+        # сетка на одну клетку больше во все стороны: при плавной панораме
+        # в крае окна видна соседняя колонка/ряд, а не пустой фон
+        self.gcols = self.cols + 2
+        self.grows = self.rows + 2
+        self.slots = [[None] * self.gcols for _ in range(self.grows)]
+        self.shown = [[""] * self.gcols for _ in range(self.grows)]
         self._dirty = True
 
     def _slot(self, j: int, i: int) -> tuple[int, int]:
         items = self.slots[j][i]
         if items is None:
             cs = self.cs
-            x0, y0 = i * cs, j * cs
+            # буферные колонки/ряды лежат за краем канвы (отрицательные иксы)
+            x0, y0 = (i - 1) * cs, (j - 1) * cs
             rect = self.canvas.create_rectangle(
                 x0, y0, x0 + cs, y0 + cs, fill=COL_HIDDEN_A, outline=COL_GRID, tags="cell"
             )
@@ -1348,16 +1504,23 @@ class GameScreen(tk.Frame):
         self._update_minimap()
 
     def _paint(self) -> None:
-        """Красит только те клетки, что изменились с прошлого кадра."""
+        """Красит только те клетки, что изменились с прошлого кадра.
+
+        Слот ``(j, i)`` стоит на пикселе ``((i-1)*cs, (j-1)*cs)`` и показывает
+        клетку ``(cam_x + i - 1, cam_y + j - 1)``: по краю окна лежит буферная
+        колонка/ряд, которую видно при плавной панораме.
+        """
         canvas = self.canvas
         cells = self.cells
         board_w, board_h = self.board_w, self.board_h
         shown = self.shown
-        for j in range(self.rows):
-            by = self.cam_y + j
+
+        gcols, grows = self.gcols, self.grows
+        for j in range(grows):
+            by = self.cam_y + j - 1
             row_shown = shown[j]
-            for i in range(self.cols):
-                bx = self.cam_x + i
+            for i in range(gcols):
+                bx = self.cam_x + i - 1
                 if 0 <= bx < board_w and 0 <= by < board_h:
                     ch = cells.get((bx, by), "?")
                 else:
@@ -1392,14 +1555,18 @@ class GameScreen(tk.Frame):
 
     def _sync_cursors(self) -> None:
         cs = self.cs
+        pan_x, pan_y = self._pan_px
+        width = self.cols * cs
+        height = self.rows * cs
         for player in self.players:
             pid = player.get("id")
             cursor = player.get("cursor")
             if pid == self.my_id or not cursor:
                 continue
             cx, cy = cursor
-            i, j = cx - self.cam_x, cy - self.cam_y
-            if not (0 <= i < self.cols and 0 <= j < self.rows):
+            x0 = (cx - self.cam_x) * cs + pan_x
+            y0 = (cy - self.cam_y) * cs + pan_y
+            if not (0 <= x0 < width and 0 <= y0 < height):
                 if pid in self.cursor_items:
                     self.canvas.itemconfigure(self.cursor_items[pid][0], state="hidden")
                     self.canvas.itemconfigure(self.cursor_items[pid][1], state="hidden")
@@ -1414,7 +1581,6 @@ class GameScreen(tk.Frame):
                                                 font=("Segoe UI", 8, "bold"), tags="cursor")
                 items = (rect, label)
                 self.cursor_items[pid] = items
-            x0, y0 = i * cs, j * cs
             self.canvas.coords(items[0], x0 + 1, y0 + 1, x0 + cs - 1, y0 + cs - 1)
             self.canvas.coords(items[1], x0 + 2, y0 - 1)
             self.canvas.itemconfigure(items[0], state="normal", outline=color)
@@ -1456,8 +1622,9 @@ class GameScreen(tk.Frame):
     def _cell_at(self, event) -> tuple[int, int] | None:
         if not self.ready:
             return None
-        bx = self.cam_x + int(event.x) // self.cs
-        by = self.cam_y + int(event.y) // self.cs
+        pan_x, pan_y = self._pan_px
+        bx = self.cam_x + int((event.x - pan_x) // self.cs)
+        by = self.cam_y + int((event.y - pan_y) // self.cs)
         if 0 <= bx < self.board_w and 0 <= by < self.board_h:
             return bx, by
         return None
@@ -1535,22 +1702,78 @@ class GameScreen(tk.Frame):
     def _on_wheel_h(self, event) -> None:
         self._pan(-4 if event.delta > 0 else 4, 0)
 
+    # -- плавная панорама ------------------------------------------------
+    def _absorb_pan(self) -> None:
+        """Сбрасывает субклеточный сдвиг: камера забирает целые клетки,
+        поле возвращается в сетку (pan = 0)."""
+        px, py = self._pan_px
+        if not px and not py:
+            return
+        cs = self.cs
+        ax = (px + cs // 2) // cs if px else 0
+        ay = (py + cs // 2) // cs if py else 0
+        if ax:
+            self.cam_x = max(0, min(self.board_w - self.cols, self.cam_x - ax))
+        if ay:
+            self.cam_y = max(0, min(self.board_h - self.rows, self.cam_y - ay))
+        # возвращаем предметы в сетку
+        self.canvas.move("cell", -px, -py)
+        self.canvas.move("cursor", -px, -py)
+        self._pan_px = (0, 0)
+
     def _on_drag_start(self, event) -> None:
+        if not self.ready:
+            return
+        self._absorb_pan()
         self._drag = (event.x, event.y, self.cam_x, self.cam_y)
 
     def _on_drag_end(self, event=None) -> None:
         self._drag = None
 
     def _on_drag(self, event) -> None:
-        sx, sy, cx, cy = self._drag or (event.x, event.y, self.cam_x, self.cam_y)
-        self.cam_x = max(0, min(self.board_w - self.cols, cx - (event.x - sx) // self.cs))
-        self.cam_y = max(0, min(self.board_h - self.rows, cy - (event.y - sy) // self.cs))
-        self._request_view(force=True)
-        self._draw()
+        """Перетаскивание средней кнопкой: поле едет за мышью целиком.
+        Субклеточный сдвиг (pan) — плавно, целые клетки перекрашиваются только
+        на границе (каждый cs пикселей)."""
+        if self._drag is None:
+            return
+        sx, sy, cx0, cy0 = self._drag
+        cs = self.cs
+
+        mx = event.x - sx          # сколько пикселей «протащили» всего
+        my = event.y - sy
+        # упираемся в края: поле не должно уезжать за границы доски
+        limit_left = max(0, (self.board_w - self.cols - cx0)) * cs
+        limit_right = max(0, cx0) * cs
+        mx = max(-limit_left, min(limit_right, mx))
+        limit_up = max(0, (self.board_h - self.rows - cy0)) * cs
+        limit_down = max(0, cy0) * cs
+        my = max(-limit_up, min(limit_down, my))
+
+        step_x, rem_x = divmod(mx, cs)
+        step_y, rem_y = divmod(my, cs)
+        cam_x1 = cx0 - step_x
+        cam_y1 = cy0 - step_y
+        pan_x1, pan_y1 = rem_x, rem_y
+
+        # единый сдвиг предметов от текущего состояния к целевому
+        pan_old_x, pan_old_y = self._pan_px
+        move_x = (self.cam_x - cam_x1) * cs + (pan_x1 - pan_old_x)
+        move_y = (self.cam_y - cam_y1) * cs + (pan_y1 - pan_old_y)
+        if move_x or move_y:
+            self.canvas.move("cell", move_x, move_y)
+            self.canvas.move("cursor", move_x, move_y)
+
+        self.cam_x, self.cam_y = cam_x1, cam_y1
+        self._pan_px = (pan_x1, pan_y1)
+
+        if (move_x, move_y) != (0, 0):
+            self._request_view(force=True)
+            self._draw()
 
     def _pan(self, dx: int, dy: int) -> None:
         if not self.ready:
             return
+        self._absorb_pan()
         new_x = max(0, min(self.board_w - self.cols, self.cam_x + dx))
         new_y = max(0, min(self.board_h - self.rows, self.cam_y + dy))
         if (new_x, new_y) == (self.cam_x, self.cam_y):
@@ -1563,6 +1786,7 @@ class GameScreen(tk.Frame):
         new = max(CELL_MIN, min(CELL_MAX, self.cs + (4 if step > 0 else -4)))
         if new == self.cs:
             return
+        self._absorb_pan()
         center_x = self.cam_x + self.cols // 2
         center_y = self.cam_y + self.rows // 2
         self.cs = new
@@ -1576,6 +1800,7 @@ class GameScreen(tk.Frame):
     def _jump(self, x: int, y: int) -> None:
         if not self.ready:
             return
+        self._absorb_pan()
         self.cam_x = max(0, min(self.board_w - self.cols, x - self.cols // 2))
         self.cam_y = max(0, min(self.board_h - self.rows, y - self.rows // 2))
         self._request_view(force=True)
@@ -1760,6 +1985,10 @@ class App:
         self.density = density
         self.seed = seed
 
+        # выбранный размер поля (запоминается между запусками)
+        self.field_w = self._clamp_side(self.settings.get("field_w", FIELD_SIZE))
+        self.field_h = self._clamp_side(self.settings.get("field_h", FIELD_SIZE))
+
         self.screen: tk.Frame | None = None
         self.server = None            # свой сервер, если хостим или играем соло
         self.host_mode: str | None = None   # None | "solo" | "net"
@@ -1771,6 +2000,21 @@ class App:
         root.protocol("WM_DELETE_WINDOW", self.quit)
 
     # -- настройки ------------------------------------------------------
+    @staticmethod
+    def _clamp_side(value: int) -> int:
+        try:
+            side = int(value)
+        except (TypeError, ValueError):
+            side = FIELD_SIZE
+        return max(FIELD_MIN, min(FIELD_MAX, side))
+
+    def _remember_size(self, field_w: int, field_h: int) -> None:
+        self.field_w = self._clamp_side(field_w) or FIELD_SIZE
+        self.field_h = self._clamp_side(field_h) or FIELD_SIZE
+        self.settings["field_w"] = self.field_w
+        self.settings["field_h"] = self.field_h
+        save_settings(self.settings)
+
     def save_name(self) -> None:
         self.settings["name"] = self.name
         save_settings(self.settings)
@@ -1807,6 +2051,10 @@ class App:
         self.root.title("Сапёр 500 × 500")
         self._swap(lambda: MenuScreen(self.root, self, message))
 
+    def show_solo_setup(self) -> None:
+        self.root.title("Сапёр · соло")
+        self._swap(lambda: SoloSetupScreen(self.root, self))
+
     def show_servers(self, error: str = "") -> None:
         self._swap(lambda: ServersScreen(self.root, self, error))
 
@@ -1824,20 +2072,25 @@ class App:
         self._swap(lambda: GameScreen(self.root, self, net, note, restore))
 
     # -- действия -------------------------------------------------------
-    def start_solo(self) -> None:
+    def start_solo(self, field_w: int | None = None,
+                   field_h: int | None = None) -> None:
         from .server import GameServer
 
         self.save_name()
+        self._remember_size(field_w or self.field_w, field_h or self.field_h)
         server = GameServer(
             port=0, name="Соло", max_players=1, advertise=False,
-            density=self.density, seed=self.seed, log=lambda *_: None,
+            density=self.density, seed=self.seed,
+            width=self.field_w, height=self.field_h, log=lambda *_: None,
         )
         server.start()
         self.server = server
         self.host_mode = "solo"
         net = NetClient("127.0.0.1", server.port, self.name)
         net.start()
-        self.show_game(net, f"Соло-игра — поле {FIELD_SIZE} × {FIELD_SIZE}")
+        self.show_game(
+            net, f"Соло-игра — поле {self.field_w} × {self.field_h}"
+        )
 
     def load_save(self, meta: dict) -> str | None:
         """Поднимает игру с полем из сохранения и входит в неё.
@@ -1899,13 +2152,17 @@ class App:
         )
         return None
 
-    def host_game(self, name: str, max_players: int, password: str) -> str | None:
+    def host_game(self, name: str, max_players: int, password: str,
+                  field_w: int | None = None,
+                  field_h: int | None = None) -> str | None:
         from .server import GameServer
 
         self.save_name()
+        self._remember_size(field_w or self.field_w, field_h or self.field_h)
         options = dict(
             name=name, max_players=max_players, password=password,
             density=self.density, seed=self.seed,
+            width=self.field_w, height=self.field_h,
             log=lambda *_: None,
         )
         server = None

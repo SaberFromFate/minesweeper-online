@@ -54,6 +54,9 @@ class Board:
 
         self.total_mines = 0
         self.revealed_count = 0
+        #: версия состояния: любое изменение поля увеличивает её — так сервер
+        #: понимает, что кэш видимых окон устарел
+        self.rev = 0
 
         self._generate()
 
@@ -123,6 +126,8 @@ class Board:
                 if not (self.mines[ny] >> nx) & 1:
                     self.mines[ny] |= 1 << nx
                     break
+        if moved:
+            self.rev += 1
         return moved
 
     # ------------------------------------------------------------------
@@ -171,6 +176,7 @@ class Board:
             self.flags[y] = row
         else:
             self.flags.pop(y, None)
+        self.rev += 1
         return on
 
     def blast(self, x: int, y: int) -> None:
@@ -181,6 +187,7 @@ class Board:
         bit = 1 << x
         self.blasts[y] = self.blasts.get(y, 0) | bit
         self.revealed[y] |= bit
+        self.rev += 1
 
     def reveal(self, x: int, y: int) -> tuple[int, bool]:
         """Открывает клетку.
@@ -200,6 +207,7 @@ class Board:
         if self.neighbor_count(x, y):
             self.revealed[y] |= bit
             self.revealed_count += 1
+            self.rev += 1
             return 1, False
 
         return self._flood(x, y), False
@@ -284,6 +292,7 @@ class Board:
                         added += cand.bit_count()
 
         self.revealed_count += added
+        self.rev += 1
         return added
 
     # ------------------------------------------------------------------
@@ -354,6 +363,17 @@ class Board:
             rev = self.revealed[y].to_bytes(nbytes, "little")
             flg = self.flags.get(y, 0).to_bytes(nbytes, "little")
             bl = self.blasts.get(y, 0).to_bytes(nbytes, "little")
+
+            # ряд ещё вообще не тронут — нечего перебирать по клеткам:
+            # вся строка «?», а слева от поля « »
+            if not (rev or flg or bl):
+                if x0 >= 0:
+                    rows.append("?" * w)
+                else:
+                    outside = min(w, -x0)
+                    rows.append(" " * outside + "?" * (w - outside))
+                continue
+
             # по одному «окну» на каждую из трёх строк: OR строк потерял бы
             # кратность мин, стоящих в одном столбце разных строк
             spans = []

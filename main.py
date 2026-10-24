@@ -11,7 +11,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from minesweeper.protocol import DEFAULT_PORT, discover, lan_ip
+from minesweeper.protocol import DEFAULT_PORT, FIELD_MAX, FIELD_MIN, FIELD_SIZE, discover, lan_ip
 from minesweeper.server import GameServer
 
 
@@ -61,6 +61,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="максимум игроков для режима --server (по умолчанию 8)")
     parser.add_argument("--password", default="",
                         help="пароль игры для режима --server (необязательно)")
+    parser.add_argument("--width", type=int, default=FIELD_SIZE,
+                        help=f"ширина поля (по умолчанию {FIELD_SIZE})")
+    parser.add_argument("--height", type=int, default=FIELD_SIZE,
+                        help=f"высота поля (по умолчанию {FIELD_SIZE})")
     return parser
 
 
@@ -70,6 +74,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if not 0.0 <= args.density < 0.95:
         print("Плотность мин должна быть в диапазоне 0..0.95", file=sys.stderr)
+        return 2
+
+    if not FIELD_MIN <= (args.width or 0) <= FIELD_MAX:
+        print(f"Ширина поля должна быть от {FIELD_MIN} до {FIELD_MAX}", file=sys.stderr)
+        return 2
+    if not FIELD_MIN <= (args.height or 0) <= FIELD_MAX:
+        print(f"Высота поля должна быть от {FIELD_MIN} до {FIELD_MAX}", file=sys.stderr)
         return 2
 
     # имя может прийти из настроек (файл рядом с пользователем), поэтому
@@ -85,6 +96,8 @@ def main(argv: list[str] | None = None) -> int:
             password=args.password,
             density=args.density,
             seed=args.seed,
+            width=args.width,
+            height=args.height,
         )
         server.start()
         print(f"Игра «{args.game_name}» доступна по адресу {lan_ip()}:{server.port}", flush=True)

@@ -40,6 +40,9 @@ class Player:
         self.addr = addr
         self.view: tuple[int, int, int, int] | None = None
         self.cursor: tuple[int, int] | None = None
+        #: недавнее выданное окно: (id поля, версия, x, y, w, h, строки).
+        #: Пока поле не меняется, соседние окна панорамы вырезаются из него.
+        self._view_cache: tuple | None = None
         self.alive = True
         self.score = 0
         self.out: queue.Queue[bytes | None] = queue.Queue(maxsize=512)
@@ -453,12 +456,22 @@ class GameServer:
             return
         x, y, w, h = player.view
         board = self.board
+        rows = None
+        cached = player._view_cache
+        if cached is not None and cached[0] == id(board) and cached[1] == board.rev:
+            cx, cy, cw, ch, crows = cached[2:]
+            if cx <= x and cy <= y and x + w <= cx + cw and y + h <= cy + ch:
+                # окно внутри уже посчитанного — вырезаем, а не считаем заново
+                rows = [r[x - cx: x - cx + w] for r in crows[y - cy: y - cy + h]]
+        if rows is None:
+            rows = board.view_rows(x, y, w, h)
+            player._view_cache = (id(board), board.rev, x, y, w, h, rows)
         player.send(
             {
                 "t": "view",
                 "x": x,
                 "y": y,
-                "rows": board.view_rows(x, y, w, h),
+                "rows": rows,
                 "found": board.revealed_count,
                 "safe": board.w * board.h - board.total_mines,
                 "over": self.game_over,

@@ -21,11 +21,13 @@ from minesweeper.client import (
     App,
     CreateScreen,
     DirectScreen,
+    FieldSizeSelector,
     GameScreen,
     MenuScreen,
     PasswordScreen,
     SavesScreen,
     ServersScreen,
+    SoloSetupScreen,
 )
 from minesweeper.server import GameServer
 
@@ -463,6 +465,82 @@ def test_game_flow(root: tk.Tk) -> None:
     print("ok: кнопка «← Меню» возвращает в меню и гасит соло-сервер")
 
 
+def test_field_sizes(root: tk.Tk) -> None:
+    """Проверка выбора размера поля в соло и в создании сетевой игры."""
+    app = new_app(root)
+
+    # соло-партия с нестандартным полем
+    app.start_solo(field_w=120, field_h=80)
+    root.update()
+    screen = app.screen
+    assert isinstance(screen, GameScreen)
+    pump(root, lambda: screen.ready and screen.board_w > 0, what="старт 120x80")
+    assert (screen.board_w, screen.board_h) == (120, 80)
+    assert app.server.board.w == 120 and app.server.board.h == 80
+    assert app.field_w == 120 and app.field_h == 80
+    app.leave_game()
+    root.update()
+    print("ok: start_solo(field_w=120, field_h=80) — поле 120×80")
+
+    # сетевая партия с нестандартным полем
+    error = app.host_game("Поле 200x150", 4, "", field_w=200, field_h=150)
+    assert error is None, error
+    root.update()
+    screen = app.screen
+    assert isinstance(screen, GameScreen)
+    pump(root, lambda: screen.ready, what="сетевая партия 200x150")
+    assert (screen.board_w, screen.board_h) == (200, 150)
+    app.leave_game()
+    root.update()
+    print("ok: host_game(field_w=200, field_h=150) — поле 200×150")
+
+    # экран настройки соло
+    app.show_solo_setup()
+    root.update()
+    assert isinstance(app.screen, SoloSetupScreen), f"ожидался SoloSetupScreen, а не {type(app.screen).__name__}"
+    sel: SoloSetupScreen = app.screen
+    sel.size.w_var.set("64")
+    sel.size.h_var.set("48")
+    sel._start()
+    root.update()
+    screen = app.screen
+    assert isinstance(screen, GameScreen)
+    pump(root, lambda: screen.ready, what="SoloSetupScreen с 64x48")
+    assert (screen.board_w, screen.board_h) == (64, 48)
+    app.leave_game()
+    root.update()
+    print("ok: SoloSetupScreen — установка 64×48")
+
+    # создание игры — селектор размера
+    app.show_servers()
+    app.show_create()
+    root.update()
+    create = app.screen
+    assert isinstance(create, CreateScreen)
+    create.size.w_var.set("100")
+    create.size.h_var.set("60")
+    create._create()
+    root.update()
+    screen = app.screen
+    assert isinstance(screen, GameScreen)
+    pump(root, lambda: screen.ready, what="CreateScreen с 100x60")
+    assert (screen.board_w, screen.board_h) == (100, 60)
+    app.leave_game()
+    root.update()
+    print("ok: CreateScreen — размер 100×60")
+
+    # панорама через API (gcols, grows)
+    app.start_solo(field_w=80, field_h=60)
+    root.update()
+    screen = app.screen
+    pump(root, lambda: screen.ready, what="панорама 80x60")
+    assert screen.gcols == screen.cols + 2
+    assert screen.grows == screen.rows + 2
+    app.leave_game()
+    root.update()
+    print("ok: буферная сетка gcols = cols+2, grows = rows+2")
+
+
 def run_test(test) -> None:
     """Каждому тесту — своё окно: App при выходе уничтожает root."""
     root = tk.Tk()
@@ -484,7 +562,8 @@ def main() -> None:
     try:
         for test in (test_menu_and_network, test_settings_and_saves,
                      test_net_save, test_join_password_and_full,
-                     test_direct_connect, test_game_flow):
+                     test_direct_connect, test_game_flow,
+                     test_field_sizes):
             run_test(test)
     finally:
         client.messagebox.askyesno = original

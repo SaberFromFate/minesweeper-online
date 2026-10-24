@@ -210,6 +210,7 @@ def apply_save(board, payload: dict) -> None:
     board.revealed_count = sum(
         (row & ~blasts.get(y, 0)).bit_count() for y, row in enumerate(board.revealed)
     )
+    board.rev += 1
 
 
 # ----------------------------------------------------------------------
