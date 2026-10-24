@@ -1993,7 +1993,7 @@ class App:
         self.server = None            # свой сервер, если хостим или играем соло
         self.host_mode: str | None = None   # None | "solo" | "net"
 
-        root.title("Сапёр 500 × 500")
+        root.title("Сапёр · LAN")
         root.configure(bg=BG)
         root.geometry("1040x760")
         root.minsize(760, 560)
@@ -2048,7 +2048,7 @@ class App:
         self.screen.pack(fill="both", expand=True)
 
     def show_menu(self, message: str = "") -> None:
-        self.root.title("Сапёр 500 × 500")
+        self.root.title("Сапёр · LAN")
         self._swap(lambda: MenuScreen(self.root, self, message))
 
     def show_solo_setup(self) -> None:

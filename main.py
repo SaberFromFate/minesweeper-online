@@ -33,7 +33,7 @@ def _ensure_streams() -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="minesweeper",
-        description="Сапёр на поле 500x500 с сетевым режимом по LAN",
+        description="Сапёр с мультиплеером по локальной сети",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "примеры:\n"
